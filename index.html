@@ -840,9 +840,49 @@
             />
             <span class="val" id="splitLabel">0.9</span>
           </div>
-          <div class="btn-group">
+          
+          <!-- 画像アップロード（マッチング用） -->
+          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-color);">
+            <div class="card-title" style="font-size: 14px;">
+              <span class="icon" style="background: rgba(245, 158, 11, 0.15); color: var(--warning);">🔍</span>
+              画像ファイル名マッチング（任意）
+            </div>
+            <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 12px;">
+              CVAT XML 内の画像名と実際の画像ファイル名が一致するか確認します。事前に画像をアップロードしてください。
+            </p>
+            <div class="drop-zone" id="dz3match" style="border-color: var(--warning);" onclick="document.getElementById('fileInput3Match').click()">
+              <span class="dz-icon">🖼️</span>
+              <div class="dz-text">画像ファイルをドラッグ、またはクリックして選択</div>
+              <div class="dz-hint">CVATに上げた元の画像を選択</div>
+              <input type="file" id="fileInput3Match" accept="image/*" multiple onchange="handleStep3MatchImages(this)" />
+            </div>
+            <div id="step3MatchInfo" style="margin-top: 12px;"></div>
+            <div id="step3MatchStatus" class="status-msg" style="margin-top: 12px;"></div>
+          </div>
+          
+          <div class="btn-group" style="margin-top: 20px;">
             <button class="btn btn-primary" onclick="runConvert3()">
               🚀 COCO JSON に変換
+            </button>
+          </div>
+        </div>
+
+        <!-- ステップ3: 画像名マッチング修復 -->
+        <div class="card" id="step3MatchCard" style="display: none">
+          <div class="card-title">
+            <span class="icon" style="background: rgba(245, 158, 11, 0.15); color: var(--warning);">🔍</span>
+            画像ファイル名マッチング
+          </div>
+          <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 12px;">
+            JSON 内の画像名と実際の画像ファイル名を比較しました。数字が一致しない場合は、自動的に修正しますか？
+          </p>
+          <div id="matchResults" style="max-height: 200px; overflow-y: auto; margin: 12px 0;"></div>
+          <div class="btn-group">
+            <button class="btn btn-primary" id="btnFixFilenames" onclick="fixFilenamesAndConvert()">
+              ✅ 画像名を自動修復して変換
+            </button>
+            <button class="btn btn-secondary" onclick="runConvert3NoFix()">
+              🔄 修復せずに変換
             </button>
           </div>
         </div>
@@ -978,7 +1018,9 @@
           xmlText: null, 
           trainJson: null, 
           valJson: null,
-          images: []  // Step 3 images for packaging
+          images: [],  // Step 3 images for packaging
+          uploadedImageNames: new Set(),  // Track uploaded image names
+          matchResults: []  // Store matching results
         },
       };
 
@@ -1270,7 +1312,118 @@
         reader.readAsText(file);
       }
 
+      // ============================================================
+      //               STEP 3: 画像名マッチング機能
+      // ============================================================
+      function handleStep3MatchImages(input) {
+        const files = input.files;
+        if (!files.length) return;
+        
+        // 保存上传的图片名
+        state.step3.uploadedImageNames = new Set();
+        const names = [];
+        for (let f of files) {
+          const baseName = f.name.toLowerCase().replace(/\.[^/.]+$/, "");
+          state.step3.uploadedImageNames.add(baseName);
+          names.push(f.name);
+        }
+        
+        document.getElementById("step3MatchInfo").innerHTML = 
+          `<span class="file-info"><span class="fi-icon">🖼️</span>${names.length} 枚の画像を選択しました</span>`;
+        
+        // 如果已经有XML，加载并检查匹配
+        if (state.step3.xmlText) {
+          checkImageMatching();
+        }
+      }
+      
+      function checkImageMatching() {
+        if (!state.step3.xmlText || state.step3.uploadedImageNames.size === 0) {
+          return;
+        }
+        
+        try {
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(state.step3.xmlText, "text/xml");
+          const xmlImages = doc.querySelectorAll("image");
+          
+          const results = [];
+          let matchedCount = 0;
+          let unmatchedCount = 0;
+          
+          xmlImages.forEach((imgElem) => {
+            const fileName = imgElem.getAttribute("name") || "";
+            // 提取数字部分: 0012_L.jpg -> 0012
+            const baseName = fileName.toLowerCase().replace(/\.[^/.]+$/, "").replace(/_l$/, "").replace(/_r$/, "");
+            
+            // 检查是否匹配
+            const isMatched = state.step3.uploadedImageNames.has(baseName) ||
+                              state.step3.uploadedImageNames.has(fileName.toLowerCase());
+            
+            if (isMatched) {
+              matchedCount++;
+            } else {
+              unmatchedCount++;
+            }
+            
+            results.push({
+              xmlName: fileName,
+              baseName: baseName,
+              matched: isMatched
+            });
+          });
+          
+          state.step3.matchResults = results;
+          
+          // 显示匹配结果
+          const html = results.slice(0, 20).map(r => {
+            const color = r.matched ? '#10b981' : '#ef4444';
+            const icon = r.matched ? '✓' : '✗';
+            return `<div style="display:flex; align-items:center; gap:8px; padding:4px 0; font-size:12px; border-bottom:1px solid #eee;">
+              <span style="color:${color}; font-weight:bold;">${icon}</span>
+              <span>${r.xmlName}</span>
+              ${!r.matched ? `<span style="color:#ef4444; font-size:11px;">(找不到对应图片)</span>` : ''}
+            </div>`;
+          }).join('');
+          
+          const totalHtml = results.length > 20 ? `<div style="font-size:12px; color:#666; padding:8px 0;">...他 ${results.length - 20} 件</div>` : '';
+          
+          if (unmatchedCount > 0) {
+            showStatus("step3MatchStatus", "warning", 
+              `⚠️ ${unmatchedCount}件が一致しません。変換時に画像名を自動修正しますか？`);
+            document.getElementById("step3MatchStatus").innerHTML += `
+              <div style="margin-top:8px;">${html}${totalHtml}</div>
+              <div style="margin-top:12px;">
+                <button class="btn btn-primary" style="padding:8px 16px; font-size:13px;" onclick="applyFilenameFix()">
+                  ✅ 画像名を自動修正して変換
+                </button>
+                <button class="btn btn-secondary" style="padding:8px 16px; font-size:13px;" onclick="runConvert3()">
+                  🔄 修正せずに変換
+                </button>
+              </div>
+            `;
+          } else {
+            showStatus("step3MatchStatus", "success", 
+              `✅ すべての画像名が一致しています！(${matchedCount}件)`);
+            document.getElementById("step3MatchStatus").innerHTML += `<div style="margin-top:8px;">${html}${totalHtml}</div>`;
+          }
+          
+        } catch (err) {
+          console.error("匹配检查错误:", err);
+        }
+      }
+      
+      // 标记是否需要修复文件名
+      let needFixFilenames = false;
+      
+      function applyFilenameFix() {
+        needFixFilenames = true;
+        runConvert3();
+      }
+
       function runConvert3() {
+        // 保存当前的修复状态用于显示
+        const willFix = needFixFilenames;
         hideStatus("step3Status");
         try {
           const parser = new DOMParser();
@@ -1301,7 +1454,24 @@
             const height = parseInt(imgElem.getAttribute("height")) || 0;
 
             // Only keep the basename
-            const baseName = fileName.split("/").pop();
+            let baseName = fileName.split("/").pop();
+            
+            // 文件名修复：如果needFixFilenames为true，尝试匹配上传的图片
+            if (needFixFilenames && state.step3.uploadedImageNames.size > 0) {
+              // 提取数字部分: 0012_L.jpg -> 0012
+              const xmlNum = baseName.toLowerCase().replace(/\.[^/.]+$/, "").replace(/_l$/, "").replace(/_r$/, "");
+              
+              // 在上传的图片中查找匹配的数字
+              for (const upName of state.step3.uploadedImageNames) {
+                const upNum = upName.replace(/\.[^/.]+$/, "").replace(/_l$/, "").replace(/_r$/, "");
+                if (upNum === xmlNum) {
+                  // 找到匹配，使用上传的图片名（保留扩展名）
+                  const ext = baseName.split('.').pop();
+                  baseName = upName.includes('.') ? upName : upName + '.' + ext;
+                  break;
+                }
+              }
+            }
 
             images.push({ id: imgId, file_name: baseName, width, height });
 
@@ -1390,7 +1560,8 @@
           showStatus(
             "step3Status",
             "success",
-            `✅ 変換成功！Train: ${trainImages.length}枚 (${trainAnns.length}BOX) / Val: ${valImages.length}枚 (${valAnns.length}BOX)`,
+            `✅ 変換成功！Train: ${trainImages.length}枚 (${trainAnns.length}BOX) / Val: ${valImages.length}枚 (${valAnns.length}BOX)` +
+            (needFixFilenames ? '<br><span style="color:#10b981;">✓ 画像名を自動修復しました</span>' : ''),
           );
         } catch (err) {
           showStatus("step3Status", "error", "❌ " + err.message);
@@ -1412,26 +1583,33 @@
       function handleStep3Images(input) {
         const files = input.files;
         if (!files.length) return;
-        
+
         state.step3.images = [];
         const names = [];
-        
+
         // 读取所有图片为 ArrayBuffer
         const promises = [];
         for (let f of files) {
+          // 创建图片名到数据的映射（小写数字匹配）
+          const baseName = f.name.toLowerCase().replace(/\.[^/.]+$/, "").replace(/_l$/, "").replace(/_r$/, "");
           names.push(f.name);
           promises.push(new Promise((resolve) => {
             const reader = new FileReader();
             reader.onload = function(e) {
-              resolve({ name: f.name, data: e.target.result });
+              // 保存原始名和数字名
+              resolve({ 
+                name: f.name, 
+                baseName: baseName,
+                data: e.target.result 
+              });
             };
             reader.readAsArrayBuffer(f);
           }));
         }
-        
+
         Promise.all(promises).then(imgs => {
           state.step3.images = imgs;
-          document.getElementById("step3ImgInfo").innerHTML = 
+          document.getElementById("step3ImgInfo").innerHTML =
             `<span class="file-info"><span class="fi-icon">🖼️</span>${imgs.length} 枚の画像を読み込みました</span>`;
           document.getElementById("btnPackage").disabled = false;
           
@@ -1583,25 +1761,61 @@ os.system("mim train mmdet finetune_custom.py")
           alert("エラー: JSONと画像が必要です");
           return;
         }
-        
+
         const btn = document.getElementById("btnPackage");
         btn.disabled = true;
         btn.innerHTML = "⏳ 打包中...";
-        
+
         try {
           // 创建 ZIP
           const zip = new JSZip();
+
+          // 解析 COCO JSON 以获取修复后的文件名
+          const trainData = JSON.parse(state.step3.trainJson);
+          const valData = JSON.parse(state.step3.valJson);
           
+          // 创建图片名到图片数据的映射
+          const imgMap = {};
+          for (const img of state.step3.images) {
+            // 使用原始文件名和小写数字名作为键
+            imgMap[img.name.toLowerCase()] = img.data;
+            imgMap[img.baseName] = img.data;
+            // 尝试带扩展名的
+            if (!img.name.includes('.')) {
+              imgMap[img.name + '.jpg'] = img.data;
+              imgMap[img.name + '.png'] = img.data;
+            }
+          }
+
           // 1. 添加 annotations/
           zip.file("annotations/train.json", state.step3.trainJson);
           zip.file("annotations/val.json", state.step3.valJson);
-          
+
           // 2. 添加 images/
           const imgFolder = zip.folder("images");
-          for (const img of state.step3.images) {
-            imgFolder.file(img.name, img.data);
+          
+          // 添加 train 图片
+          for (const imgInfo of trainData.images) {
+            const imgName = imgInfo.file_name.toLowerCase();
+            const imgData = imgMap[imgName];
+            if (imgData) {
+              imgFolder.file(imgInfo.file_name, imgData);
+            } else {
+              console.warn(`找不到图片: ${imgInfo.file_name}`);
+            }
           }
           
+          // 添加 val 图片
+          for (const imgInfo of valData.images) {
+            const imgName = imgInfo.file_name.toLowerCase();
+            const imgData = imgMap[imgName];
+            if (imgData) {
+              imgFolder.file(imgInfo.file_name, imgData);
+            } else {
+              console.warn(`找不到图片: ${imgInfo.file_name}`);
+            }
+          }
+
           // 3. 添加 setup_cloud_train.py
           zip.file("setup_cloud_train.py", SETUP_CLOUD_TRAIN_PY);
           
