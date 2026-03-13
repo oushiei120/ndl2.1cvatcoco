@@ -1,0 +1,1626 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NDLOCR ⇄ CVAT ⇄ COCO コンバーター</title>
+    <meta
+      name="description"
+      content="NDL OCR XML → CVAT 1.1 → COCO JSON 3ステップ変換ツール"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <!-- JSZip for ZIP packaging -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+      :root {
+        --bg-primary: #f6f8fb;
+        --bg-secondary: #eef1f6;
+        --bg-card: #ffffff;
+        --bg-card-hover: #f8f9fc;
+        --bg-input: #f0f2f7;
+        --border-color: #dfe3ec;
+        --border-active: #5b7fff;
+        --text-primary: #1e293b;
+        --text-secondary: #64748b;
+        --text-muted: #94a3b8;
+        --accent-1: #5b7fff;
+        --accent-2: #7c6bef;
+        --accent-3: #5b7fff;
+        --success: #10b981;
+        --success-bg: rgba(16, 185, 129, 0.08);
+        --warning: #f59e0b;
+        --warning-bg: rgba(245, 158, 11, 0.08);
+        --error: #ef4444;
+        --gradient-1: linear-gradient(135deg, #5b7fff 0%, #7c6bef 100%);
+        --gradient-2: linear-gradient(135deg, #5b7fff 0%, #6c63ff 100%);
+        --gradient-card: none;
+        --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+        --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.1);
+        --shadow-glow: 0 0 0 3px rgba(91, 127, 255, 0.12);
+        --radius-sm: 10px;
+        --radius-md: 14px;
+        --radius-lg: 18px;
+        --radius-xl: 22px;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Noto Sans JP", -apple-system, BlinkMacSystemFont, sans-serif;
+        background: linear-gradient(135deg, #f0f4f8 0%, #e2e8f0 50%, #eef2ff 100%);
+        background-attachment: fixed;
+        color: var(--text-primary);
+        min-height: 100vh;
+        line-height: 1.7;
+        font-weight: 400;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* Header */
+      .header {
+        text-align: center;
+        padding: 40px 24px 28px;
+        background: rgba(255, 255, 255, 0.4);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.6);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
+      }
+      .header h1 {
+        font-size: 24px;
+        font-weight: 700;
+        background: var(--gradient-1);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 6px;
+        letter-spacing: 0.5px;
+      }
+      .header p {
+        color: var(--text-muted);
+        font-size: 13px;
+        font-weight: 400;
+      }
+
+      /* Step Navigation */
+      .step-nav {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        padding: 24px;
+        max-width: 800px;
+        margin: 0 auto;
+      }
+      .step-tab {
+        flex: 1;
+        max-width: 240px;
+        padding: 12px 16px;
+        background: rgba(255, 255, 255, 0.6);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.6);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.02);
+      }
+      .step-tab::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: var(--gradient-1);
+        opacity: 0;
+        transition: opacity 0.3s;
+      }
+      .step-tab.active::before {
+        opacity: 1;
+      }
+      .step-tab:hover {
+        background: rgba(255, 255, 255, 0.9);
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+      }
+      .step-tab.active {
+        border-color: var(--accent-1);
+        background: rgba(255, 255, 255, 0.9);
+        box-shadow: var(--shadow-glow), 0 8px 24px rgba(0, 0, 0, 0.06);
+      }
+      .step-tab.done {
+        border-color: var(--success);
+      }
+      .step-tab.done::before {
+        background: var(--success);
+        opacity: 1;
+      }
+      .step-num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: var(--bg-input);
+        border: 1px solid var(--border-color);
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 6px;
+        transition: all 0.3s;
+      }
+      .step-tab.active .step-num {
+        background: var(--accent-1);
+        border-color: var(--accent-1);
+        color: #fff;
+      }
+      .step-tab.done .step-num {
+        background: var(--success);
+        border-color: var(--success);
+        color: #fff;
+      }
+      .step-tab .step-label {
+        display: block;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-secondary);
+      }
+      .step-tab.active .step-label {
+        color: var(--text-primary);
+      }
+
+      /* Main Container */
+      .container {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 0 24px 64px;
+      }
+
+      /* Step Panels */
+      .step-panel {
+        display: none;
+        animation: fadeIn 0.4s ease;
+      }
+      .step-panel.active {
+        display: block;
+      }
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(12px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+
+      /* Cards */
+      .card {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.8);
+        border-radius: var(--radius-lg);
+        padding: 28px;
+        margin-bottom: 20px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.04);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+      }
+      .card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
+      }
+      .card-title {
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .card-title .icon {
+        width: 28px;
+        height: 28px;
+        border-radius: var(--radius-sm);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+      }
+
+      /* Drop Zone */
+      .drop-zone {
+        border: 2px dashed var(--border-color);
+        border-radius: var(--radius-md);
+        padding: 40px 24px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+      }
+      .drop-zone::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(
+          circle at center,
+          rgba(99, 102, 241, 0.05) 0%,
+          transparent 70%
+        );
+        opacity: 0;
+        transition: opacity 0.3s;
+      }
+      .drop-zone:hover,
+      .drop-zone.drag-over {
+        border-color: var(--accent-1);
+        background: rgba(99, 102, 241, 0.04);
+      }
+      .drop-zone:hover::after,
+      .drop-zone.drag-over::after {
+        opacity: 1;
+      }
+      .drop-zone .dz-icon {
+        font-size: 36px;
+        margin-bottom: 12px;
+        display: block;
+        opacity: 0.6;
+      }
+      .drop-zone .dz-text {
+        color: var(--text-secondary);
+        font-size: 14px;
+      }
+      .drop-zone .dz-hint {
+        color: var(--text-muted);
+        font-size: 12px;
+        margin-top: 6px;
+      }
+      .drop-zone input[type="file"] {
+        display: none;
+      }
+
+      /* Settings Row */
+      .settings-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin: 16px 0;
+        flex-wrap: wrap;
+      }
+      .settings-row label {
+        font-size: 13px;
+        color: var(--text-secondary);
+        font-weight: 500;
+      }
+      .settings-row input[type="range"] {
+        flex: 1;
+        max-width: 200px;
+        accent-color: var(--accent-1);
+      }
+      .settings-row .val {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--accent-3);
+        min-width: 36px;
+      }
+
+      /* Buttons */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 20px;
+        border: none;
+        border-radius: var(--radius-sm);
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-family: inherit;
+      }
+      .btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      .btn-primary {
+        background: var(--gradient-2);
+        color: #fff;
+        box-shadow: 0 4px 12px rgba(91, 127, 255, 0.3);
+      }
+      .btn-primary:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(91, 127, 255, 0.4);
+      }
+      .btn-secondary {
+        background: var(--bg-input);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+      }
+      .btn-secondary:hover:not(:disabled) {
+        border-color: var(--accent-1);
+      }
+      .btn-success {
+        background: var(--success);
+        color: #fff;
+      }
+      .btn-success:hover:not(:disabled) {
+        filter: brightness(1.1);
+      }
+      .btn-group {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+      }
+
+      /* Stats */
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 12px;
+        margin: 16px 0;
+      }
+      .stat-item {
+        background: var(--bg-input);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-sm);
+        padding: 12px 16px;
+        text-align: center;
+      }
+      .stat-val {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--accent-3);
+      }
+      .stat-label {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 2px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      /* Status Messages */
+      .status-msg {
+        padding: 12px 16px;
+        border-radius: var(--radius-sm);
+        font-size: 13px;
+        margin: 12px 0;
+        display: none;
+        align-items: flex-start;
+        gap: 8px;
+      }
+      .status-msg.show {
+        display: flex;
+      }
+      .status-msg.success {
+        background: var(--success-bg);
+        color: var(--success);
+        border: 1px solid rgba(34, 197, 94, 0.2);
+      }
+      .status-msg.warning {
+        background: var(--warning-bg);
+        color: var(--warning);
+        border: 1px solid rgba(245, 158, 11, 0.2);
+      }
+      .status-msg.error {
+        background: rgba(239, 68, 68, 0.1);
+        color: var(--error);
+        border: 1px solid rgba(239, 68, 68, 0.2);
+      }
+
+      /* Guidance Section */
+      .guide-steps {
+        counter-reset: guide;
+        list-style: none;
+      }
+      .guide-steps li {
+        counter-increment: guide;
+        padding: 12px 12px 12px 44px;
+        position: relative;
+        font-size: 14px;
+        color: var(--text-secondary);
+        border-bottom: 1px solid var(--border-color);
+        line-height: 1.7;
+      }
+      .guide-steps li:last-child {
+        border-bottom: none;
+      }
+      .guide-steps li::before {
+        content: counter(guide);
+        position: absolute;
+        left: 8px;
+        top: 14px;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: var(--accent-1);
+        color: #fff;
+        font-size: 12px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .guide-steps li strong {
+        color: var(--text-primary);
+      }
+      .guide-steps li code {
+        background: var(--bg-input);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 12px;
+        color: var(--accent-3);
+      }
+
+      /* Copy Area */
+      .copy-area {
+        position: relative;
+        background: var(--bg-input);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-sm);
+        margin: 12px 0;
+      }
+      .copy-area pre {
+        padding: 16px;
+        font-size: 12px;
+        overflow-x: auto;
+        max-height: 200px;
+        overflow-y: auto;
+        color: var(--text-secondary);
+        font-family: "SF Mono", "Fira Code", "Noto Sans JP", monospace;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .copy-btn {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        padding: 6px 12px;
+        background: var(--accent-1);
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        font-size: 12px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: all 0.2s;
+        font-family: inherit;
+      }
+      .copy-btn:hover {
+        filter: brightness(1.2);
+      }
+      .copy-btn.copied {
+        background: var(--success);
+      }
+
+      /* File Info Badge */
+      .file-info {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: var(--bg-input);
+        border: 1px solid var(--border-color);
+        border-radius: 20px;
+        padding: 6px 14px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin: 8px 4px 8px 0;
+      }
+      .file-info .fi-icon {
+        font-size: 14px;
+      }
+
+      /* Responsive */
+      @media (max-width: 640px) {
+        .step-nav {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .step-tab {
+          max-width: none;
+        }
+        .header h1 {
+          font-size: 22px;
+        }
+        .card {
+          padding: 20px;
+        }
+        .stats {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>NDLOCR ⇄ CVAT ⇄ COCO</h1>
+      <p>3ステップ変換ツール — NDL OCR XML → CVAT 1.1 → COCO JSON</p>
+    </div>
+
+    <div class="step-nav">
+      <div class="step-tab active" onclick="switchStep(1)" id="stepTab1">
+        <span class="step-num">1</span>
+        <span class="step-label">OCR XML → CVAT</span>
+      </div>
+      <div class="step-tab" onclick="switchStep(2)" id="stepTab2">
+        <span class="step-num">2</span>
+        <span class="step-label">CVAT 操作ガイド</span>
+      </div>
+      <div class="step-tab" onclick="switchStep(3)" id="stepTab3">
+        <span class="step-num">3</span>
+        <span class="step-label">CVAT → COCO</span>
+      </div>
+    </div>
+
+    <div class="container">
+      <!-- ========== STEP 1 ========== -->
+      <div class="step-panel active" id="stepPanel1">
+        <div class="card">
+          <div class="card-title">
+            <span
+              class="icon"
+              style="
+                background: rgba(99, 102, 241, 0.15);
+                color: var(--accent-1);
+              "
+              >📄</span
+            >
+            NDL OCR XML をアップロード
+          </div>
+          <div
+            class="drop-zone"
+            id="dz1"
+            onclick="document.getElementById('fileInput1').click()"
+          >
+            <span class="dz-icon">📂</span>
+            <div class="dz-text">
+              ここにXMLファイルをドラッグ、またはクリックして選択
+            </div>
+            <div class="dz-hint">
+              NDL OCR 出力の XML ファイル（例: active_learning_*.sorted.xml）
+            </div>
+            <input
+              type="file"
+              id="fileInput1"
+              accept=".xml"
+              onchange="handleStep1File(this)"
+            />
+          </div>
+          <div id="step1FileInfo"></div>
+          <div id="step1Status" class="status-msg"></div>
+        </div>
+
+        <div class="card" id="step1ImageCard" style="display: none">
+          <div class="card-title">
+            <span
+              class="icon"
+              style="
+                background: rgba(139, 92, 246, 0.15);
+                color: var(--accent-2);
+              "
+              >🖼️</span
+            >
+            画像フォルダをアップロード（必須）
+          </div>
+          <div
+            class="drop-zone"
+            id="dz1img"
+            onclick="document.getElementById('fileInput1img').click()"
+          >
+            <span class="dz-icon">🖼️</span>
+            <div class="dz-text">
+              画像ファイルをドラッグ、またはクリックして選択
+            </div>
+            <div class="dz-hint">
+              対象の画像ファイル（.jpg等）をすべて選択してください。選択した画像のみCVAT用XMLに出力されます。
+            </div>
+            <input
+              type="file"
+              id="fileInput1img"
+              accept="image/*"
+              multiple
+              onchange="handleStep1Images(this)"
+            />
+          </div>
+          <div id="step1ImgInfo"></div>
+        </div>
+
+        <div class="card" id="step1ResultCard" style="display: none">
+          <div class="card-title">
+            <span
+              class="icon"
+              style="background: rgba(34, 197, 94, 0.15); color: var(--success)"
+              >✅</span
+            >
+            変換結果
+          </div>
+          <div class="stats" id="step1Stats"></div>
+          <div class="btn-group">
+            <button class="btn btn-primary" onclick="downloadCvatXml()">
+              ⬇ CVAT XML ダウンロード
+            </button>
+            <button class="btn btn-success" onclick="runConvert1()">
+              🔄 再変換
+            </button>
+          </div>
+
+          <div style="margin-top: 24px">
+            <div class="card-title" style="font-size: 14px">
+              <span
+                class="icon"
+                style="
+                  background: rgba(245, 158, 11, 0.15);
+                  color: var(--warning);
+                "
+                >📋</span
+              >
+              Raw Labels JSON（CVATにコピー用）
+            </div>
+            <div class="copy-area">
+              <button
+                class="copy-btn"
+                id="copyLabelsBtn"
+                onclick="copyLabels()"
+              >
+                コピー
+              </button>
+              <pre id="labelsJsonPre"></pre>
+            </div>
+          </div>
+
+          <div class="btn-group">
+            <button
+              class="btn btn-primary"
+              onclick="
+                markStep1Done();
+                switchStep(2);
+              "
+            >
+              次へ → CVAT 操作ガイド
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== STEP 2 ========== -->
+      <div class="step-panel" id="stepPanel2">
+        <div class="card">
+          <div class="card-title">
+            <span
+              class="icon"
+              style="
+                background: rgba(99, 102, 241, 0.15);
+                color: var(--accent-1);
+              "
+              >📘</span
+            >
+            CVAT インポート操作手順
+          </div>
+          <ol class="guide-steps">
+            <li>
+              CVATにログインし、<strong>Tasks</strong> →
+              <strong>Create a new task</strong> をクリック
+            </li>
+            <li>
+              <strong>Name</strong> にタスク名を入力（例:
+              <code>Kojiruien_101_150</code>）
+            </li>
+            <li>
+              <strong>Labels</strong> →
+              <strong>Raw</strong> タブを選択し、上のステップ1で生成された
+              <strong>Raw Labels JSON</strong> をペーストして
+              <strong>Done</strong> をクリック
+            </li>
+            <li>
+              <strong>Select files</strong>
+              に対象の画像ファイルをすべてドラッグ＆ドロップし、<strong
+                >Submit</strong
+              >
+              をクリック
+            </li>
+            <li>
+              タスク詳細画面 → <strong>Actions</strong> →
+              <strong>Upload annotations</strong> → フォーマット
+              <strong>CVAT 1.1</strong> を選択し、ステップ1で生成された
+              <strong>CVAT XML</strong> をアップロード
+            </li>
+            <li>
+              <strong>Job</strong>
+              をクリックしてアノテーション画面を開き、枠の確認・修正作業を実施
+            </li>
+            <li>
+              修正完了後、<strong>Actions</strong> →
+              <strong>Export task dataset</strong> →
+              <strong>CVAT for images 1.1</strong> でZIPエクスポート
+            </li>
+            <li>
+              ZIPを解凍し、中の
+              <strong>annotations.xml</strong> を次のステップ3でアップロード
+            </li>
+          </ol>
+        </div>
+        <div class="card">
+          <div class="card-title">
+            <span
+              class="icon"
+              style="background: rgba(34, 197, 94, 0.15); color: var(--success)"
+              >🎯</span
+            >
+            準備完了？
+          </div>
+          <p
+            style="
+              color: var(--text-secondary);
+              font-size: 14px;
+              margin-bottom: 16px;
+            "
+          >
+            CVATでの修正作業が完了し、ZIPをエクスポートしたら、次のステップへ進んでください。
+          </p>
+          <button class="btn btn-primary" onclick="switchStep(3)">
+            次へ → COCO 変換
+          </button>
+        </div>
+      </div>
+
+      <!-- ========== STEP 3 ========== -->
+      <div class="step-panel" id="stepPanel3">
+        <div class="card">
+          <div class="card-title">
+            <span
+              class="icon"
+              style="
+                background: rgba(99, 102, 241, 0.15);
+                color: var(--accent-1);
+              "
+              >📄</span
+            >
+            CVAT エクスポート XML をアップロード
+          </div>
+          <div
+            class="drop-zone"
+            id="dz3"
+            onclick="document.getElementById('fileInput3').click()"
+          >
+            <span class="dz-icon">📂</span>
+            <div class="dz-text">
+              ここにXMLファイルをドラッグ、またはクリックして選択
+            </div>
+            <div class="dz-hint">
+              CVAT からエクスポートした annotations.xml（CVAT 1.1 形式）
+            </div>
+            <input
+              type="file"
+              id="fileInput3"
+              accept=".xml"
+              onchange="handleStep3File(this)"
+            />
+          </div>
+          <div id="step3FileInfo"></div>
+          <div id="step3Status" class="status-msg"></div>
+        </div>
+
+        <div class="card" id="step3SettingsCard" style="display: none">
+          <div class="card-title">
+            <span
+              class="icon"
+              style="
+                background: rgba(139, 92, 246, 0.15);
+                color: var(--accent-2);
+              "
+              >⚙️</span
+            >
+            設定
+          </div>
+          <div class="settings-row">
+            <label>Train / Val 分割比:</label>
+            <input
+              type="range"
+              id="splitSlider"
+              min="0.5"
+              max="1.0"
+              step="0.05"
+              value="0.9"
+              oninput="updateSplitLabel()"
+            />
+            <span class="val" id="splitLabel">0.9</span>
+          </div>
+          <div class="btn-group">
+            <button class="btn btn-primary" onclick="runConvert3()">
+              🚀 COCO JSON に変換
+            </button>
+          </div>
+        </div>
+
+        <div class="card" id="step3ResultCard" style="display: none">
+          <div class="card-title">
+            <span
+              class="icon"
+              style="background: rgba(34, 197, 94, 0.15); color: var(--success)"
+              >✅</span
+            >
+            COCO 変換結果
+          </div>
+          <div class="stats" id="step3Stats"></div>
+          
+          <div class="card" style="margin-top: 20px; background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.2);">
+            <div class="card-title">
+              <span class="icon" style="background: rgba(99, 102, 241, 0.15); color: var(--accent-1);">📦</span>
+              一键打包（Cloud Training用）
+            </div>
+            <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 12px;">
+              下の画像フォルダをアップロードしてください。ZIPパッケージに含まれます。
+            </p>
+            <div class="drop-zone" id="dz3images" style="border-color: var(--accent-1);" onclick="document.getElementById('fileInput3Images').click()">
+              <span class="dz-icon">🖼️</span>
+              <div class="dz-text">画像フォルダをドラッグ、またはクリックして選択</div>
+              <div class="dz-hint">CVATにアップロードした元の画像ファイルを選択</div>
+              <input type="file" id="fileInput3Images" accept="image/*" multiple onchange="handleStep3Images(this)" />
+            </div>
+            <div id="step3ImgInfo" style="margin-top: 12px;"></div>
+            <div id="step3PackStatus" class="status-msg" style="margin-top: 12px;"></div>
+            <div class="btn-group" style="margin-top: 16px;">
+              <button class="btn btn-primary" id="btnPackage" onclick="packageAndDownload()" disabled>
+                📦 ZIP打包（train.json + val.json + images + setup_cloud_train.py）
+              </button>
+            </div>
+          </div>
+          
+          <div style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 20px;">
+            <div class="card-title" style="font-size: 14px;">
+              <span class="icon" style="background: rgba(245, 158, 11, 0.15); color: var(--warning);">📋</span>
+              個別ダウンロード（古い方法）
+            </div>
+            <div class="btn-group">
+              <button class="btn btn-secondary" onclick="downloadTrainJson()">
+                ⬇ train.json
+              </button>
+              <button class="btn btn-secondary" onclick="downloadValJson()">
+                ⬇ val.json
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // ============================================================
+      //                     CATEGORY MAPPING
+      // ============================================================
+      const NDL_TYPE_MAP = {
+        本文: "line_main",
+        割注: "line_inote",
+        頭注: "line_hnote",
+        行書注: "line_caption",
+        広告文字: "line_ad",
+        図版: "block_fig",
+        表組: "block_table",
+        柱: "block_pillar",
+        ノンブル: "block_folio",
+        ルビ: "block_rubi",
+        数式: "block_eqn",
+        化学式: "block_cfm",
+        欧文: "block_eng",
+        広告: "block_ad",
+        グラフ: "block_chart",
+      };
+
+      const NDLOCR_CATEGORIES = [
+        { id: 1, name: "line_main", supercategory: "line" },
+        { id: 2, name: "line_inote", supercategory: "line" },
+        { id: 3, name: "line_hnote", supercategory: "line" },
+        { id: 4, name: "line_caption", supercategory: "line" },
+        { id: 5, name: "line_ad", supercategory: "line" },
+        { id: 6, name: "block_fig", supercategory: "block" },
+        { id: 7, name: "block_table", supercategory: "block" },
+        { id: 8, name: "block_pillar", supercategory: "block" },
+        { id: 9, name: "block_folio", supercategory: "block" },
+        { id: 10, name: "block_rubi", supercategory: "block" },
+        { id: 11, name: "block_chart", supercategory: "block" },
+        { id: 12, name: "block_eqn", supercategory: "block" },
+        { id: 13, name: "block_cfm", supercategory: "block" },
+        { id: 14, name: "block_eng", supercategory: "block" },
+        { id: 15, name: "block_ad", supercategory: "block" },
+        { id: 16, name: "text_block", supercategory: "text_block" },
+        { id: 17, name: "text_block_ad", supercategory: "text_block" },
+      ];
+      const CAT_NAME_TO_ID = {};
+      NDLOCR_CATEGORIES.forEach((c) => (CAT_NAME_TO_ID[c.name] = c.id));
+
+      const LABEL_COLORS = {
+        line_main: "#33ff33",
+        line_inote: "#ffff33",
+        line_hnote: "#cc33ff",
+        line_caption: "#ff9933",
+        line_ad: "#33ffcc",
+        block_fig: "#ff6633",
+        block_table: "#3399ff",
+        block_pillar: "#ff3333",
+        block_folio: "#ff33cc",
+        block_rubi: "#ffcc33",
+        block_chart: "#33ddff",
+        block_eqn: "#99ff33",
+        block_cfm: "#ff33ff",
+        block_eng: "#33ccff",
+        block_ad: "#ccff33",
+        text_block: "#6699ff",
+        text_block_ad: "#ff6699",
+      };
+
+      // ============================================================
+      //                     GLOBAL STATE
+      // ============================================================
+      let state = {
+        step1: {
+          xmlText: null,
+          imageNames: null,
+          pages: null,
+          cvatXml: null,
+          labelsJson: null,
+        },
+        step3: { 
+          xmlText: null, 
+          trainJson: null, 
+          valJson: null,
+          images: []  // Step 3 images for packaging
+        },
+      };
+
+      // ============================================================
+      //                     UI HELPERS
+      // ============================================================
+      function switchStep(n) {
+        document
+          .querySelectorAll(".step-panel")
+          .forEach((p) => p.classList.remove("active"));
+        document
+          .querySelectorAll(".step-tab")
+          .forEach((t) => t.classList.remove("active"));
+        document.getElementById("stepPanel" + n).classList.add("active");
+        document.getElementById("stepTab" + n).classList.add("active");
+      }
+      function markStep1Done() {
+        document.getElementById("stepTab1").classList.add("done");
+      }
+      function showStatus(id, type, msg) {
+        const el = document.getElementById(id);
+        el.className = "status-msg show " + type;
+        el.innerHTML = msg;
+      }
+      function hideStatus(id) {
+        document.getElementById(id).className = "status-msg";
+      }
+      function updateSplitLabel() {
+        document.getElementById("splitLabel").textContent =
+          document.getElementById("splitSlider").value;
+      }
+
+      // Drag and drop setup
+      document.querySelectorAll(".drop-zone").forEach((dz) => {
+        dz.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          dz.classList.add("drag-over");
+        });
+        dz.addEventListener("dragleave", () =>
+          dz.classList.remove("drag-over"),
+        );
+        dz.addEventListener("drop", (e) => {
+          e.preventDefault();
+          dz.classList.remove("drag-over");
+          const input = dz.querySelector('input[type="file"]');
+          if (input && e.dataTransfer.files.length) {
+            input.files = e.dataTransfer.files;
+            input.dispatchEvent(new Event("change"));
+          }
+        });
+      });
+
+      function downloadBlob(content, filename, mime) {
+        const blob = new Blob([content], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+
+      // ============================================================
+      //                     STEP 1: NDL OCR XML → CVAT
+      // ============================================================
+      function handleStep1File(input) {
+        const file = input.files[0];
+        if (!file) return;
+        document.getElementById("step1FileInfo").innerHTML =
+          `<span class="file-info"><span class="fi-icon">📄</span>${file.name} (${(file.size / 1024).toFixed(1)} KB)</span>`;
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+          state.step1.xmlText = e.target.result;
+          document.getElementById("step1ImageCard").style.display = "";
+          showStatus(
+            "step1Status",
+            "warning",
+            "⚠️ 次に、下にある「画像フォルダをアップロード」から対象の画像を選択してください。"
+          );
+          // 必須なのでここではまだ変換しない
+        };
+        reader.readAsText(file);
+      }
+
+      function handleStep1Images(input) {
+        const files = input.files;
+        if (!files.length) return;
+        const names = new Set();
+        for (let f of files) names.add(f.name);
+        state.step1.imageNames = names;
+        document.getElementById("step1ImgInfo").innerHTML =
+          `<span class="file-info"><span class="fi-icon">🖼️</span>${names.size} 枚の画像を選択</span>`;
+        if (state.step1.xmlText) parseAndConvertStep1();
+      }
+
+      function parseAndConvertStep1() {
+        runConvert1();
+      }
+
+      function runConvert1() {
+        hideStatus("step1Status");
+        try {
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(state.step1.xmlText, "text/xml");
+          const parseError = doc.querySelector("parsererror");
+          if (parseError)
+            throw new Error(
+              "XML解析エラー: " + parseError.textContent.substring(0, 100),
+            );
+
+          let pages = doc.querySelectorAll("PAGE, page");
+          if (!pages || !pages.length) {
+            pages = doc.getElementsByTagName("PAGE");
+            if (!pages || !pages.length) {
+              pages = doc.getElementsByTagName("page");
+            }
+          }
+
+          if (!pages || !pages.length) {
+            throw new Error(
+              "PAGE要素が見つかりません。NDL OCR XMLではなく、別のXML（CVAT用XMLなど）を選択していませんか？正しいファイルか確認してください。"
+            );
+          }
+
+          const imageNames = state.step1.imageNames;
+          if (!imageNames || imageNames.size === 0) {
+            throw new Error("画像ファイルが選択されていません。先に画像をアップロードしてください。");
+          }
+
+          // Create a more flexible matching set (lowercase, no extension, no _L suffix)
+          const uploadedBases = new Set();
+          imageNames.forEach(name => {
+            const base = name.toLowerCase().replace(/\.[^/.]+$/, "").replace(/_l$/, "");
+            uploadedBases.add(base);
+          });
+
+          const foundLabels = new Set();
+          const parsedPages = [];
+
+          pages.forEach((page, idx) => {
+            const imgName = page.getAttribute("IMAGENAME") || "";
+            const w = parseInt(page.getAttribute("WIDTH")) || 0;
+            const h = parseInt(page.getAttribute("HEIGHT")) || 0;
+
+            // Strip extension and _L suffix for flexible matching: 0101_L.jpg → 0101
+            const baseName = imgName.toLowerCase().replace(/\.[^/.]+$/, "").replace(/_l$/, "");
+
+            // Mandatory filter: Check if the base name exists in the uploaded files
+            if (!uploadedBases.has(baseName)) {
+              return;
+            }
+
+            const boxes = [];
+
+            // Process LINE elements (inside TEXTBLOCK or standalone)
+            page.querySelectorAll("LINE").forEach((line) => {
+              const type = line.getAttribute("TYPE") || "";
+              const label = NDL_TYPE_MAP[type];
+              if (!label) return;
+              foundLabels.add(label);
+              const x = parseInt(line.getAttribute("X")) || 0;
+              const y = parseInt(line.getAttribute("Y")) || 0;
+              const bw = parseInt(line.getAttribute("WIDTH")) || 0;
+              const bh = parseInt(line.getAttribute("HEIGHT")) || 0;
+              boxes.push({ label, xtl: x, ytl: y, xbr: x + bw, ybr: y + bh });
+            });
+
+            // Process BLOCK elements (standalone, not in TEXTBLOCK)
+            page.querySelectorAll("BLOCK").forEach((block) => {
+              const type = block.getAttribute("TYPE") || "";
+              const label = NDL_TYPE_MAP[type];
+              if (!label) return;
+              foundLabels.add(label);
+              const x = parseInt(block.getAttribute("X")) || 0;
+              const y = parseInt(block.getAttribute("Y")) || 0;
+              const bw = parseInt(block.getAttribute("WIDTH")) || 0;
+              const bh = parseInt(block.getAttribute("HEIGHT")) || 0;
+              boxes.push({ label, xtl: x, ytl: y, xbr: x + bw, ybr: y + bh });
+            });
+
+            parsedPages.push({
+              id: idx, // CVAT expects 0-indexed IDs
+              name: imgName, // DO NOT strip _L for CVAT XML export, must match uploaded filename exactly
+              width: w,
+              height: h,
+              boxes,
+            });
+          });
+
+          if (!parsedPages.length)
+            throw new Error(
+              "フィルタ後のページが0件です。画像ファイル名を確認してください。",
+            );
+
+          state.step1.pages = parsedPages;
+
+          // Build CVAT 1.1 XML
+          const labelsArr = Array.from(foundLabels).sort();
+          let xml =
+            '<?xml version="1.0" ?>\n<annotations>\n  <version>1.1</version>\n  <meta>\n    <task>\n';
+          xml += "      <name>ndlocr_layout</name>\n";
+          xml += `      <size>${parsedPages.length}</size>\n`;
+          xml += "      <mode>annotation</mode>\n      <labels>\n";
+          labelsArr.forEach((l) => {
+            xml += `        <label>\n          <name>${l}</name>\n          <type>any</type>\n          <attributes/>\n        </label>\n`;
+          });
+          xml += "      </labels>\n    </task>\n  </meta>\n";
+
+          let totalBoxes = 0;
+          parsedPages.forEach((p) => {
+            xml += `  <image id="${p.id}" name="${p.name}" width="${p.width}" height="${p.height}">\n`;
+            p.boxes.forEach((b) => {
+              xml += `    <box label="${b.label}" xtl="${b.xtl}" ytl="${b.ytl}" xbr="${b.xbr}" ybr="${b.ybr}" occluded="0"/>\n`;
+              totalBoxes++;
+            });
+            xml += "  </image>\n";
+          });
+          xml += "</annotations>\n";
+          state.step1.cvatXml = xml;
+
+          // Build raw_labels.json
+          const rawLabels = labelsArr.map((l) => ({
+            name: l,
+            color: LABEL_COLORS[l] || "#999999",
+            type: "any",
+            attributes: [],
+          }));
+          const labelsJsonStr = JSON.stringify(rawLabels, null, 2);
+          state.step1.labelsJson = labelsJsonStr;
+
+          // Show results
+          document.getElementById("step1ResultCard").style.display = "";
+          document.getElementById("step1Stats").innerHTML = `
+      <div class="stat-item"><div class="stat-val">${parsedPages.length}</div><div class="stat-label">ページ数</div></div>
+      <div class="stat-item"><div class="stat-val">${totalBoxes}</div><div class="stat-label">ボックス数</div></div>
+      <div class="stat-item"><div class="stat-val">${labelsArr.length}</div><div class="stat-label">ラベル種別</div></div>
+    `;
+          document.getElementById("labelsJsonPre").textContent = labelsJsonStr;
+          showStatus(
+            "step1Status",
+            "success",
+            "✅ 変換成功！CVAT XMLとRaw Labels JSONが生成されました。",
+          );
+        } catch (err) {
+          showStatus("step1Status", "error", "❌ " + err.message);
+        }
+      }
+
+      function downloadCvatXml() {
+        if (!state.step1.cvatXml) return;
+        downloadBlob(state.step1.cvatXml, "cvat_import.xml", "application/xml");
+      }
+
+      function copyLabels() {
+        if (!state.step1.labelsJson) return;
+        navigator.clipboard.writeText(state.step1.labelsJson).then(() => {
+          const btn = document.getElementById("copyLabelsBtn");
+          btn.textContent = "コピー済み ✓";
+          btn.classList.add("copied");
+          setTimeout(() => {
+            btn.textContent = "コピー";
+            btn.classList.remove("copied");
+          }, 2000);
+        });
+      }
+
+      // ============================================================
+      //                     STEP 3: CVAT XML → COCO JSON
+      // ============================================================
+      function handleStep3File(input) {
+        const file = input.files[0];
+        if (!file) return;
+        document.getElementById("step3FileInfo").innerHTML =
+          `<span class="file-info"><span class="fi-icon">📄</span>${file.name} (${(file.size / 1024).toFixed(1)} KB)</span>`;
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+          state.step3.xmlText = e.target.result;
+          document.getElementById("step3SettingsCard").style.display = "";
+          showStatus(
+            "step3Status",
+            "success",
+            "✅ ファイル読み込み完了。設定を確認して変換ボタンを押してください。",
+          );
+        };
+        reader.readAsText(file);
+      }
+
+      function runConvert3() {
+        hideStatus("step3Status");
+        try {
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(state.step3.xmlText, "text/xml");
+          const parseError = doc.querySelector("parsererror");
+          if (parseError)
+            throw new Error(
+              "XML解析エラー: " + parseError.textContent.substring(0, 100),
+            );
+
+          const xmlImages = doc.querySelectorAll("image");
+          if (!xmlImages.length)
+            throw new Error(
+              "image要素が見つかりません。CVAT 1.1形式か確認してください。",
+            );
+
+          const splitRatio = parseFloat(
+            document.getElementById("splitSlider").value,
+          );
+          const images = [];
+          const annotations = [];
+          let annId = 1;
+
+          xmlImages.forEach((imgElem) => {
+            const fileName = imgElem.getAttribute("name") || "";
+            const imgId = parseInt(imgElem.getAttribute("id")) + 1;
+            const width = parseInt(imgElem.getAttribute("width")) || 0;
+            const height = parseInt(imgElem.getAttribute("height")) || 0;
+
+            // Only keep the basename
+            const baseName = fileName.split("/").pop();
+
+            images.push({ id: imgId, file_name: baseName, width, height });
+
+            imgElem.querySelectorAll("box").forEach((box) => {
+              const label = box.getAttribute("label") || "";
+              if (!(label in CAT_NAME_TO_ID)) return;
+
+              const xtl = parseFloat(box.getAttribute("xtl"));
+              const ytl = parseFloat(box.getAttribute("ytl"));
+              const xbr = parseFloat(box.getAttribute("xbr"));
+              const ybr = parseFloat(box.getAttribute("ybr"));
+              const w = xbr - xtl;
+              const h = ybr - ytl;
+              const poly = [
+                xtl,
+                ytl,
+                xtl + w,
+                ytl,
+                xtl + w,
+                ytl + h,
+                xtl,
+                ytl + h,
+              ];
+
+              annotations.push({
+                id: annId++,
+                image_id: imgId,
+                category_id: CAT_NAME_TO_ID[label],
+                bbox: [xtl, ytl, w, h],
+                area: w * h,
+                iscrowd: 0,
+                segmentation: [poly],
+              });
+            });
+          });
+
+          // Shuffle and split
+          const shuffled = [...images].sort(() => Math.random() - 0.5);
+          const splitIdx = Math.floor(shuffled.length * splitRatio);
+          const trainImages = shuffled.slice(0, splitIdx);
+          const valImages = shuffled.slice(splitIdx);
+
+          const trainImgIds = new Set(trainImages.map((i) => i.id));
+          const trainAnns = annotations.filter((a) =>
+            trainImgIds.has(a.image_id),
+          );
+          const valImgIds = new Set(valImages.map((i) => i.id));
+          const valAnns = annotations.filter((a) => valImgIds.has(a.image_id));
+
+          const info = {
+            description: "NDLOCR Fine-tuning Dataset",
+            url: "",
+            version: "1.0",
+            year: new Date().getFullYear(),
+            contributor: "User",
+            date_created: new Date().toISOString(),
+          };
+
+          const trainCoco = {
+            info,
+            licenses: [],
+            images: trainImages,
+            annotations: trainAnns,
+            categories: NDLOCR_CATEGORIES,
+          };
+          const valCoco = {
+            info,
+            licenses: [],
+            images: valImages,
+            annotations: valAnns,
+            categories: NDLOCR_CATEGORIES,
+          };
+
+          state.step3.trainJson = JSON.stringify(trainCoco, null, 2);
+          state.step3.valJson = JSON.stringify(valCoco, null, 2);
+
+          document.getElementById("step3ResultCard").style.display = "";
+          document.getElementById("step3Stats").innerHTML = `
+      <div class="stat-item"><div class="stat-val">${images.length}</div><div class="stat-label">総画像数</div></div>
+      <div class="stat-item"><div class="stat-val">${annotations.length}</div><div class="stat-label">総ボックス数</div></div>
+      <div class="stat-item"><div class="stat-val">${trainImages.length}</div><div class="stat-label">Train画像</div></div>
+      <div class="stat-item"><div class="stat-val">${valImages.length}</div><div class="stat-label">Val画像</div></div>
+      <div class="stat-item"><div class="stat-val">${trainAnns.length}</div><div class="stat-label">Trainボックス</div></div>
+      <div class="stat-item"><div class="stat-val">${valAnns.length}</div><div class="stat-label">Valボックス</div></div>
+    `;
+          showStatus(
+            "step3Status",
+            "success",
+            `✅ 変換成功！Train: ${trainImages.length}枚 (${trainAnns.length}BOX) / Val: ${valImages.length}枚 (${valAnns.length}BOX)`,
+          );
+        } catch (err) {
+          showStatus("step3Status", "error", "❌ " + err.message);
+        }
+      }
+
+      function downloadTrainJson() {
+        if (!state.step3.trainJson) return;
+        downloadBlob(state.step3.trainJson, "train.json", "application/json");
+      }
+      function downloadValJson() {
+        if (!state.step3.valJson) return;
+        downloadBlob(state.step3.valJson, "val.json", "application/json");
+      }
+
+      // ============================================================
+      //                     STEP 3: 画像アップロード & 打包
+      // ============================================================
+      function handleStep3Images(input) {
+        const files = input.files;
+        if (!files.length) return;
+        
+        state.step3.images = [];
+        const names = [];
+        
+        // 读取所有图片为 ArrayBuffer
+        const promises = [];
+        for (let f of files) {
+          names.push(f.name);
+          promises.push(new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+              resolve({ name: f.name, data: e.target.result });
+            };
+            reader.readAsArrayBuffer(f);
+          }));
+        }
+        
+        Promise.all(promises).then(imgs => {
+          state.step3.images = imgs;
+          document.getElementById("step3ImgInfo").innerHTML = 
+            `<span class="file-info"><span class="fi-icon">🖼️</span>${imgs.length} 枚の画像を読み込みました</span>`;
+          document.getElementById("btnPackage").disabled = false;
+          
+          // 检查图片数量是否匹配
+          if (state.step3.trainJson && state.step3.valJson) {
+            const trainImgCount = JSON.parse(state.step3.trainJson).images.length;
+            const valImgCount = JSON.parse(state.step3.valJson).images.length;
+            const totalImgCount = trainImgCount + valImgCount;
+            
+            if (imgs.length !== totalImgCount) {
+              showStatus("step3PackStatus", "warning", 
+                `⚠️ 注意: COCOの画像数 (${totalImgCount}) とアップロードした画像数 (${imgs.length}) が一致しません。`);
+            } else {
+              showStatus("step3PackStatus", "success", "✅ 画像数が一致しました！");
+            }
+          }
+        });
+      }
+      
+      // setup_cloud_train.py 内容（云端训练用）
+      const SETUP_CLOUD_TRAIN_PY = `import os
+import json
+import sys
+
+print("🚀 启动重训练流程...")
+
+# ==========================================
+# 1. 自动检测并修复 Mask 问题
+# ==========================================
+data_root = '/root/autodl-tmp/training_data/'
+train_json_path = os.path.join(data_root, 'annotations/train.json')
+val_json_path = os.path.join(data_root, 'annotations/val.json')
+
+def fix_json_masks(json_path):
+    if not os.path.exists(json_path):
+        print(f"❌ 找不到文件 {json_path}")
+        return False
+    
+    print(f"🔍 检查 {os.path.basename(json_path)}...")
+    try:
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+        
+        modified = False
+        for ann in data['annotations']:
+            if 'segmentation' not in ann or not ann['segmentation']:
+                x, y, w, h = ann['bbox']
+                ann['segmentation'] = [[x, y, x + w, y, x + w, y + h, x, y + h]]
+                ann['iscrowd'] = 0
+                ann['area'] = w * h
+                modified = True
+                
+        if modified:
+            print(f"⚠️  修复 Mask: {os.path.basename(json_path)}")
+            with open(json_path, 'w') as f:
+                json.dump(data, f)
+        else:
+            print("✅ 数据正常")
+        return True
+    except Exception as e:
+        print(f"❌ 读取错误: {e}")
+        return False
+
+fix_json_masks(train_json_path)
+fix_json_masks(val_json_path)
+
+# ==========================================
+# 2. 生成配置
+# ==========================================
+base_config_path = 'submodules/ndl_layout/models/cascade_mask_rcnn_convnext-t_p4_w7_fpn_giou_4conv1f_fp16_ms-crop_3x_coco.py'
+
+config_content = f"""
+_base_ = '{base_config_path}'
+default_scope = 'mmdet'
+
+# 数据路径
+data_root = '{data_root}'
+
+# 类别
+class_names = ('line_main', 'line_inote', 'line_hnote', 'line_caption', 'line_ad',
+               'block_fig', 'block_table', 'block_pillar', 'block_folio',
+               'block_rubi', 'block_chart', 'block_eqn', 'block_cfm', 'block_eng',
+               'block_ad', 'text_block', 'text_block_ad')
+
+metainfo = dict(classes=class_names, palette=[(220, 20, 60)] * 17)
+
+# 数据加载
+train_dataloader = dict(
+    batch_size=2, num_workers=2, persistent_workers=True,
+    sampler=dict(type='DefaultSampler', shuffle=True),
+    batch_sampler=dict(type='AspectRatioBatchSampler'),
+    dataset=dict(
+        type='CocoDataset', data_root=data_root,
+        ann_file='annotations/train.json', data_prefix=dict(img='images/'),
+        filter_cfg=dict(filter_empty_gt=True, min_size=32),
+        pipeline=[
+            dict(type='LoadImageFromFile', backend_args=None),
+            dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
+            dict(type='Resize', scale=(1024, 1024), keep_ratio=True),
+            dict(type='RandomFlip', prob=0.5),
+            dict(type='PackDetInputs')
+        ],
+        metainfo=metainfo))
+
+val_dataloader = dict(
+    batch_size=1, num_workers=1, persistent_workers=True, drop_last=False,
+    sampler=dict(type='DefaultSampler', shuffle=False),
+    dataset=dict(
+        type='CocoDataset', data_root=data_root,
+        ann_file='annotations/val.json', data_prefix=dict(img='images/'),
+        test_mode=True,
+        pipeline=[
+            dict(type='LoadImageFromFile', backend_args=None),
+            dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
+            dict(type='Resize', scale=(1024, 1024), keep_ratio=True),
+            dict(type='PackDetInputs', meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape', 'scale_factor'))
+        ],
+        metainfo=metainfo))
+test_dataloader = val_dataloader
+
+val_evaluator = dict(type='CocoMetric', ann_file=data_root+'annotations/val.json', metric=['bbox', 'segm'], format_only=False)
+test_evaluator = val_evaluator
+
+# 关闭混合精度 (Amp), 使用纯 FP32
+optim_wrapper = dict(
+    type='OptimWrapper',
+    optimizer=dict(type='AdamW', lr=0.0001, weight_decay=0.05)
+)
+
+visualizer = dict(type='DetLocalVisualizer', vis_backends=[dict(type='LocalVisBackend')], name='visualizer')
+load_from = 'submodules/ndl_layout/models/ndl_retrainmodel.pth'
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=20, val_interval=1)
+checkpoint_config = dict(interval=5)
+log_config = dict(interval=10, hooks=[dict(type='TextLoggerHook')])
+work_dir = '/root/autodl-tmp/work_dirs/finetune_custom'
+"""
+
+os.chdir(os.path.join(ndlocr_cli_dir, 'submodules/ndl_layout'))
+with open('finetune_custom.py', 'w') as f:
+    f.write(config_content)
+
+print("✅ 配置文件已生成")
+print("🔥 开始训练...")
+os.system("mim train mmdet finetune_custom.py")
+`;
+
+      async function packageAndDownload() {
+        if (!state.step3.trainJson || !state.step3.valJson || !state.step3.images.length) {
+          alert("エラー: JSONと画像が必要です");
+          return;
+        }
+        
+        const btn = document.getElementById("btnPackage");
+        btn.disabled = true;
+        btn.innerHTML = "⏳ 打包中...";
+        
+        try {
+          // 创建 ZIP
+          const zip = new JSZip();
+          
+          // 1. 添加 annotations/
+          zip.file("annotations/train.json", state.step3.trainJson);
+          zip.file("annotations/val.json", state.step3.valJson);
+          
+          // 2. 添加 images/
+          const imgFolder = zip.folder("images");
+          for (const img of state.step3.images) {
+            imgFolder.file(img.name, img.data);
+          }
+          
+          // 3. 添加 setup_cloud_train.py
+          zip.file("setup_cloud_train.py", SETUP_CLOUD_TRAIN_PY);
+          
+          // 生成 ZIP
+          const content = await zip.generateAsync({ type: "blob" });
+          
+          // 下载
+          const timestamp = new Date().toISOString().slice(0,10);
+          downloadBlob(content, `training_package_${timestamp}.zip`, "application/zip");
+          
+          showStatus("step3PackStatus", "success", "✅ ZIP打包完成！上传到云端执行 setup_cloud_train.py 即可训练。");
+          btn.innerHTML = "✅ 已打包";
+          
+        } catch (err) {
+          showStatus("step3PackStatus", "error", "❌ 打包失败: " + err.message);
+          btn.disabled = false;
+          btn.innerHTML = "📦 ZIP打包";
+        }
+      }
+    </script>
+  </body>
+</html>
